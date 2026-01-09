@@ -66,7 +66,7 @@ For no authentication (when using alternative authentication methods):
   :group 'agent-shell)
 
 (defcustom agent-shell-auggie-command
-  '("auggie" "--print")
+  '("auggie" "--acp")
   "Command and parameters for the Auggie client.
 
 The first element is the command name, and the rest are command parameters."
