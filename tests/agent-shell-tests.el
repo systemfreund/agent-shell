@@ -189,13 +189,12 @@
 (ert-deftest agent-shell--format-plan-test ()
   "Test `agent-shell--format-plan' function."
   ;; Test homogeneous statuses
-  (should (equal (agent-shell--format-plan [((content . "Update state initialization")
+  (should (equal (substring-no-properties (agent-shell--format-plan [((content . "Update state initialization")
                                              (status . "pending"))
                                             ((content . "Update session initialization")
-                                             (status . "pending"))])
-                 (substring-no-properties
-                  " pending  Update state initialization
- pending  Update session initialization")))
+                                             (status . "pending"))]))
+                  (concat " pending   Update state initialization  \n"
+                          " pending   Update session initialization")))
 
   ;; Test mixed statuses
   (should (equal (substring-no-properties
@@ -205,9 +204,9 @@
                                               (status . "in_progress"))
                                              ((content . "Third task")
                                               (status . "completed"))]))
-                 " pending     First task
- in progress  Second task
- completed   Third task"))
+                 (concat " pending       First task \n"
+                         " in progress   Second task\n"
+                         " completed     Third task ")))
 
   ;; Test empty entries
   (should (equal (agent-shell--format-plan []) "")))
@@ -530,27 +529,25 @@
                         (mcpCapabilities (http . t) (sse . t)))))
     (should (equal (substring-no-properties
                     (agent-shell--format-agent-capabilities capabilities))
-                   (string-trim"
-prompt  image and embedded context
-mcp     http and sse"))))
+                   (concat
+                    "prompt  image and embedded context\n"
+                    "mcp     http and sse              "))))
 
   ;; Test with single capability per category (no comma)
   (let ((capabilities '((promptCapabilities (image . t))
                         (mcpCapabilities (http . t)))))
     (should (equal (substring-no-properties
                     (agent-shell--format-agent-capabilities capabilities))
-                   (string-trim "
-prompt  image
-mcp     http"))))
+                   (concat "prompt  image\n"
+                           "mcp     http "))))
 
   ;; Test with top-level boolean capability (loadSession)
   (let ((capabilities '((loadSession . t)
                         (promptCapabilities (image . t) (embeddedContext . t)))))
     (should (equal (substring-no-properties
                     (agent-shell--format-agent-capabilities capabilities))
-                   (string-trim "
-load session
-prompt        image and embedded context"))))
+                   (concat "load session                            \n"
+                           "prompt        image and embedded context"))))
 
   ;; Test with all capabilities disabled (should return empty string)
   (let ((capabilities '((promptCapabilities (image . :false) (audio . :false)))))
@@ -584,7 +581,8 @@ prompt        image and embedded context"))))
 Found 6 files
 /path/to/file1.md
 /path/to/file2.md
-```")))
+```
+")))
 
     ;; Test with minimal parameters
     (let ((entry (agent-shell--make-transcript-tool-call-entry
@@ -597,20 +595,23 @@ Found 6 files
 
 ```
 simple output
-```")))
+```
+")))
 
     ;; Test with nil status and title
     (let ((entry (agent-shell--make-transcript-tool-call-entry
                   :status nil
                   :title nil
                   :output "output")))
-      (should (equal entry "\n\n### Tool Call [no status]:
+      (should (equal entry "
 
+### Tool Call [no status]: \n
 **Timestamp:** 2025-11-02 18:17:41
 
 ```
 output
-```")))
+```
+")))
 
     ;; Test that output whitespace is trimmed
     (let ((entry (agent-shell--make-transcript-tool-call-entry
@@ -623,20 +624,118 @@ output
 
 ```
 output with spaces
-```")))
+```
+")))
 
     ;; Test that code blocks in output are stripped
     (let ((entry (agent-shell--make-transcript-tool-call-entry
                   :status "completed"
                   :title "test"
                   :output "```\ncode block content\n```")))
-      (should (equal entry "\n\n### Tool Call [completed]: test
+      (should (equal entry "
+
+### Tool Call [completed]: test
 
 **Timestamp:** 2025-11-02 18:17:41
 
 ```
 code block content
-```")))))
+```
+")))
+
+    ;; Test that code blocks in output are stripped
+    (let ((entry (agent-shell--make-transcript-tool-call-entry
+                  :status "completed"
+                  :title "test"
+                  :output "  \n  ```\ncode block content with spaces\n```\n")))
+      (should (equal entry "
+
+### Tool Call [completed]: test
+
+**Timestamp:** 2025-11-02 18:17:41
+
+```
+code block content with spaces
+```
+")))))
+
+(ert-deftest agent-shell-mcp-servers-test ()
+  "Test `agent-shell-mcp-servers' function normalization."
+  ;; Test with nil
+  (let ((agent-shell-mcp-servers nil))
+    (should (equal (agent-shell--mcp-servers) nil)))
+
+  ;; Test with empty list
+  (let ((agent-shell-mcp-servers '()))
+    (should (equal (agent-shell--mcp-servers) nil)))
+
+  ;; Test stdio transport with lists that need normalization
+  (let ((agent-shell-mcp-servers
+         '(((name . "filesystem")
+            (command . "npx")
+            (args . ("-y" "@modelcontextprotocol/server-filesystem" "/tmp"))
+            (env . (((name . "DEBUG") (value . "true"))
+                    ((name . "LOG_LEVEL") (value . "info"))))))))
+    (should (equal (agent-shell--mcp-servers)
+                   [((name . "filesystem")
+                     (command . "npx")
+                     (args . ["-y" "@modelcontextprotocol/server-filesystem" "/tmp"])
+                     (env . [((name . "DEBUG") (value . "true"))
+                             ((name . "LOG_LEVEL") (value . "info"))]))])))
+
+  ;; Test HTTP transport with lists that need normalization
+  (let ((agent-shell-mcp-servers
+         '(((name . "notion")
+            (type . "http")
+            (url . "https://mcp.notion.com/mcp")
+            (headers . (((name . "Authorization") (value . "Bearer token"))
+                        ((name . "Content-Type") (value . "application/json"))))))))
+    (should (equal (agent-shell--mcp-servers)
+                   [((name . "notion")
+                     (type . "http")
+                     (url . "https://mcp.notion.com/mcp")
+                     (headers . [((name . "Authorization") (value . "Bearer token"))
+                                 ((name . "Content-Type") (value . "application/json"))]))])))
+
+  ;; Test with already-vectorized fields (should remain unchanged)
+  (let ((agent-shell-mcp-servers
+         '(((name . "filesystem")
+            (command . "npx")
+            (args . ["-y" "@modelcontextprotocol/server-filesystem" "/tmp"])
+            (env . [])))))
+    (should (equal (agent-shell--mcp-servers)
+                   [((name . "filesystem")
+                     (command . "npx")
+                     (args . ["-y" "@modelcontextprotocol/server-filesystem" "/tmp"])
+                     (env . []))])))
+
+  ;; Test multiple servers
+  (let ((agent-shell-mcp-servers
+         '(((name . "notion")
+            (type . "http")
+            (url . "https://mcp.notion.com/mcp")
+            (headers . []))
+           ((name . "filesystem")
+            (command . "npx")
+            (args . ("-y" "@modelcontextprotocol/server-filesystem" "/tmp"))
+            (env . [])))))
+    (should (equal (agent-shell--mcp-servers)
+                   [((name . "notion")
+                     (type . "http")
+                     (url . "https://mcp.notion.com/mcp")
+                     (headers . []))
+                    ((name . "filesystem")
+                     (command . "npx")
+                     (args . ["-y" "@modelcontextprotocol/server-filesystem" "/tmp"])
+                     (env . []))])))
+
+  ;; Test server without optional fields
+  (let ((agent-shell-mcp-servers
+         '(((name . "simple")
+            (command . "simple-server")))))
+    (should (equal (agent-shell--mcp-servers)
+                   [((name . "simple")
+                     (command . "simple-server"))]))))
 
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
