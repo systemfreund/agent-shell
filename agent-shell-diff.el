@@ -31,6 +31,7 @@
 
 (eval-when-compile
   (require 'cl-lib))
+(require 'diff)
 (require 'diff-mode)
 
 (defvar-local agent-shell-on-exit nil
