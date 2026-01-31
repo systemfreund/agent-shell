@@ -3591,8 +3591,11 @@ Returns non-nil if a permission button was found, nil otherwise."
 
 ;;; Region
 
-(cl-defun agent-shell--insert-to-shell-buffer (&key text submit no-focus)
+(cl-defun agent-shell--insert-to-shell-buffer (&key shell-buffer text submit no-focus)
   "Insert TEXT into the agent shell buffer at `point-max'.
+
+SHELL-BUFFER, when non-nil, specifies the target shell buffer.
+Otherwise, uses `agent-shell--shell-buffer' to find one.
 
 SUBMIT, when non-nil, submits the shell buffer after insertion.
 
@@ -3605,7 +3608,8 @@ Returns an alist with insertion details or nil otherwise:
    (:end . END))"
   (unless text
     (user-error "No text provided to insert"))
-  (let* ((shell-buffer (agent-shell--shell-buffer :no-create t))
+  (let* ((shell-buffer (or shell-buffer
+                           (agent-shell--shell-buffer :no-create t)))
          (inhibit-read-only t)
          ;; Displaying before with-current-buffer below
          ;; ensures window is selected, thus window-point
