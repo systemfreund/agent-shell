@@ -356,12 +356,46 @@ See `agent-shell-*-make-*-config' for details."
   :group 'agent-shell)
 
 (defcustom agent-shell-preferred-agent-config nil
-  "Default configuration to use for all new shells.
+  "Default agent to use for all new shells.
 
 If this is set, `agent-shell' will unconditionally use this
-config and not prompt you to select one."
-  :type '(alist :key-type symbol :value-type sexp)
+agent and not prompt you to select one.
+
+Can be set to a symbol identifier (e.g., `claude-code') or a full
+configuration alist for backwards compatibility."
+  :type '(choice (const :tag "None (prompt each time)" nil)
+                 (const :tag "Auggie" auggie)
+                 (const :tag "Claude Code" claude-code)
+                 (const :tag "Codex" codex)
+                 (const :tag "Copilot" copilot)
+                 (const :tag "Cursor" cursor)
+                 (const :tag "Droid" droid)
+                 (const :tag "Gemini CLI" gemini-cli)
+                 (const :tag "Goose" goose)
+                 (const :tag "Mistral" le-chat)
+                 (const :tag "OpenCode" opencode)
+                 (const :tag "Pi" pi)
+                 (const :tag "Qwen Code" qwen-code)
+                 (symbol :tag "Custom identifier")
+                 (alist :tag "Full configuration (legacy)"
+                        :key-type symbol :value-type sexp))
   :group 'agent-shell)
+
+(defun agent-shell--resolve-preferred-config ()
+  "Resolve `agent-shell-preferred-agent-config' to a full configuration.
+
+If the value is a symbol, look it up in `agent-shell-agent-configs'.
+If it's already an alist (legacy format), return it as-is.
+Returns nil if no matching configuration is found."
+  (cond
+   ((null agent-shell-preferred-agent-config) nil)
+   ((symbolp agent-shell-preferred-agent-config)
+    (seq-find (lambda (config)
+                (eq (map-elt config :identifier)
+                    agent-shell-preferred-agent-config))
+              agent-shell-agent-configs))
+   ((listp agent-shell-preferred-agent-config)
+    agent-shell-preferred-agent-config)))
 
 (defcustom agent-shell-mcp-servers nil
   "List of MCP servers to initialize when creating a new session.
@@ -506,7 +540,7 @@ handles viewport mode detection, existing shell reuse, and project context."
         (agent-shell-viewport--show-buffer
          :shell-buffer (when new-shell
                          (agent-shell--start :config (or config
-                                                         agent-shell-preferred-agent-config
+                                                         (agent-shell--resolve-preferred-config)
                                                          (agent-shell-select-config
                                                           :prompt "Start new agent: ")
                                                          (error "No agent config found"))
@@ -514,7 +548,7 @@ handles viewport mode detection, existing shell reuse, and project context."
                                              :new-session t))))
     (if new-shell
         (agent-shell-start :config (or config
-                                       agent-shell-preferred-agent-config
+                                       (agent-shell--resolve-preferred-config)
                                        (agent-shell-select-config
                                         :prompt "Start new agent: ")
                                        (error "No agent config found")))
@@ -533,7 +567,7 @@ handles viewport mode detection, existing shell reuse, and project context."
               (if (y-or-n-p "No shells in project.  Start a new one? ")
                   (let ((text (agent-shell--context)))
                     (agent-shell-start :config (or config
-                                                   agent-shell-preferred-agent-config
+                                                   (agent-shell--resolve-preferred-config)
                                                    (agent-shell-select-config
                                                     :prompt "Start new agent: ")
                                                    (error "No agent config found")))
@@ -545,7 +579,7 @@ handles viewport mode detection, existing shell reuse, and project context."
                     (agent-shell--insert-to-shell-buffer :text text))))
             (let ((text (agent-shell--context)))
               (agent-shell-start :config (or config
-                                             agent-shell-preferred-agent-config
+                                             (agent-shell--resolve-preferred-config)
                                              (agent-shell-select-config
                                               :prompt "Start new agent: ")
                                              (error "No agent config found")))
@@ -3024,7 +3058,7 @@ Returns a buffer object or nil."
             (user-error "No agent shell buffers available for current project"))
         (when (y-or-n-p "No shells in project.  Start a new one? ")
           (get-buffer
-           (agent-shell--start :config (or agent-shell-preferred-agent-config
+           (agent-shell--start :config (or (agent-shell--resolve-preferred-config)
                                            (agent-shell-select-config
                                             :prompt "Start new agent: ")
                                            (error "No agent config found"))
