@@ -2553,6 +2553,9 @@ Must provide ON-INITIATED (lambda ())."
    :client (map-elt agent-shell--state :client)
    :request (acp-make-initialize-request
              :protocol-version 1
+             :client-info `((name . "agent-shell")
+                            (title . "Emacs Agent Shell")
+                            (version . ,agent-shell--version))
              :read-text-file-capability agent-shell-text-file-capabilities
              :write-text-file-capability agent-shell-text-file-capabilities)
    :on-success (lambda (response)
