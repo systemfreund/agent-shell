@@ -404,28 +404,32 @@ Example configuration with multiple servers:
                     \"@modelcontextprotocol/server-filesystem\" \"/tmp\"))
            (env . ()))))
 
-You can also pass a function so that you can provide extra context like
-the current working directory (`agent-shell-cwd') .
+Lambdas can be used anywhere in the configuration hierarchy for dynamic
+evaluation at session startup time.  This is useful for values that
+depend on runtime context like the current working directory
+(`agent-shell-cwd').  Note: only lambdas are evaluated, not named
+functions, to avoid accidentally calling external symbols.
 
-For example, you can set up an Emacs MCP using external `claude-code-ide'
-package. See documentation of that package for more configuration:
+For example, using the `claude-code-ide' package (see its documentation
+for more details), you can embed a lambda for the URL that registers
+the session and returns the appropriate endpoint:
 
   (setq agent-shell-mcp-servers
-        \='((lambda ()
-            (require \='claude-code-ide-mcp-server)
-            (let* ((project-dir (agent-shell-cwd))
-                   (session-id (format \"agent-shell-%s-%s\"
-                                 (file-name-nondirectory
-                                   (directory-file-name project-dir))
-                                 (format-time-string \"%Y%m%d-%H%M%S\"))))
-              (puthash session-id `(:project-dir ,project-dir)
-                       claude-code-ide-mcp-server--sessions)
-              `((name . \"emacs\")
-                (type . \"http\")
-                (headers . ())
-                (url . ,(format \"http://localhost:%d/mcp/%s\"
-                           (claude-code-ide-mcp-server-ensure-server)
-                           session-id)))))))"
+        \='(((name . \"emacs\")
+           (type . \"http\")
+           (headers . ())
+           (url . (lambda ()
+                    (require \='claude-code-ide-mcp-server)
+                    (let* ((project-dir (agent-shell-cwd))
+                           (session-id (format \"agent-shell-%s-%s\"
+                                         (file-name-nondirectory
+                                           (directory-file-name project-dir))
+                                         (format-time-string \"%Y%m%d-%H%M%S\"))))
+                      (puthash session-id `(:project-dir ,project-dir)
+                               claude-code-ide-mcp-server--sessions)
+                      (format \"http://localhost:%d/mcp/%s\"
+                              (claude-code-ide-mcp-server-ensure-server)
+                              session-id)))))))"
   :type '(repeat (choice (alist :key-type symbol :value-type sexp) function))
   :group 'agent-shell)
 
