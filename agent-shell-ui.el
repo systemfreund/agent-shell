@@ -481,16 +481,18 @@ NAVIGATION controls navigability:
   (and str (not (string-empty-p str)) str))
 
 (defun agent-shell-ui--indent-text (text &optional indent-string)
-  "Indent TEXT by adding INDENT-STRING to the beginning of each non-empty line.
-INDENT-STRING defaults to two spaces."
+  "Indent TEXT visually without affecting copied text.
+INDENT-STRING defaults to two spaces.
+Uses `line-prefix' display property so indentation is visual only."
   (when text
-    (let ((indent (or indent-string "  ")))
-      (mapconcat (lambda (line)
-                   (if (string-empty-p line)
-                       line
-                     (concat indent line)))
-                 (split-string text "\n")
-                 "\n"))))
+    (let* ((indent (or indent-string "  "))
+           (lines (split-string text "\n")))
+      (concat
+       (propertize (car lines) 'line-prefix indent 'wrap-prefix indent)
+       (mapconcat (lambda (line)
+                    (propertize (concat "\n" line) 'line-prefix indent 'wrap-prefix indent))
+                  (cdr lines)
+                  "")))))
 
 (defun agent-shell-ui-forward-block ()
   "Jump to the next block."
