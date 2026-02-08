@@ -517,7 +517,7 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
 (defvar agent-shell--shell-maker-config nil)
 
 ;;;###autoload
-(defun agent-shell (&optional new-shell)
+(defun agent-shell (&optional arg)
   "Start or reuse an existing agent shell.
 
 `agent-shell' carries some DWIM (do what I mean) behaviour.
@@ -533,9 +533,21 @@ shell input.
 See `agent-shell-context-sources' on how to control DWIM
 behaviour.
 
-With prefix argument NEW-SHELL, force start a new shell."
+With \\[universal-argument] prefix, force start a new shell.
+
+With \\[universal-argument] \\[universal-argument] prefix, prompt to pick an existing shell."
   (interactive "P")
-  (agent-shell--dwim :new-shell new-shell))
+  (cond
+   ((equal arg '(16))
+    (let ((shell-buffer (completing-read "Switch to shell: "
+                                         (mapcar #'buffer-name (or (agent-shell-buffers)
+                                                                   (user-error "No shells available")))
+                                         nil t)))
+      (agent-shell--display-buffer (get-buffer shell-buffer))))
+   ((equal arg '(4))
+    (agent-shell--dwim :new-shell t))
+   (t
+    (agent-shell--dwim))))
 
 (cl-defun agent-shell--dwim (&key config new-shell)
   "Start or reuse an agent shell with DWIM behavior.
@@ -604,7 +616,7 @@ handles viewport mode detection, existing shell reuse, and project context."
 
 Always prompts for agent selection, even if existing shells are available."
   (interactive)
-  (agent-shell t))
+  (agent-shell '(4)))
 
 ;;;###autoload
 (defun agent-shell-prompt-compose ()
