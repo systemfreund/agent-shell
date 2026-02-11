@@ -868,6 +868,10 @@ Prefer inlining single-use expressions rather than binding them to intermediate 
   (do-something (map-nested-elt response '(usage totalTokens)))
 #+end_src
 
+*** Move substantial functionality to separate files
+
+=agent-shell.el= is getting large. When adding substantial new functionality, move helper functions to a dedicated file (e.g. =agent-shell-completion.el=). You can keep the same =agent-shell--= function name prefix. See [[https://github.com/xenodium/agent-shell/commit/c60203934d577e88d03035038a1e247bb1ce0ded][this commit]] for an example of this transition.
+
 *** Code/feature consistency
 
 Please try to look for a similar feature in the code base and replicate an existing pattern usage if possible.
