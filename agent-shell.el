@@ -63,6 +63,7 @@
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
 (require 'agent-shell-qwen)
+(require 'agent-shell-usage)
 (require 'agent-shell-worktree)
 (require 'agent-shell-ui)
 (require 'agent-shell-viewport)
@@ -506,7 +507,17 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :prompt-capabilities nil)
-        (cons :pending-requests nil)))
+        (cons :pending-requests nil)
+        (cons :usage (list (cons :total-tokens 0)
+                           (cons :input-tokens 0)
+                           (cons :output-tokens 0)
+                           (cons :thought-tokens 0)
+                           (cons :cached-read-tokens 0)
+                           (cons :cached-write-tokens 0)
+                           (cons :context-used 0)
+                           (cons :context-size 0)
+                           (cons :cost-amount 0.0)
+                           (cons :cost-currency nil)))))
 
 (defvar-local agent-shell--state
     (agent-shell--make-state))
@@ -1103,6 +1114,13 @@ otherwise returns COMMAND unchanged."
                ;; Silently handle config option updates (e.g., from set_model/set_mode)
                ;; These are informational notifications that don't require user-visible output
                ;; Note: No need to set :last-entry-type as no text was inserted.
+               nil)
+              ((equal (map-elt update 'sessionUpdate) "usage_update")
+               ;; Extract context window and cost information
+               (agent-shell--update-usage-from-notification :state state :update update)
+               ;; Update header to reflect new context usage indicator
+               (agent-shell--update-header-and-mode-line)
+               ;; Note: This is session-level state, no need to set :last-entry-type
                nil)
               (t
                (agent-shell--update-fragment
@@ -2240,6 +2258,7 @@ The model contains all inputs needed to render the graphical header."
       (:frame-width . ,(frame-pixel-width))
       (:font-height . ,(default-font-height))
       (:background-mode . ,(frame-parameter nil 'background-mode))
+      (:context-indicator . ,(agent-shell--context-usage-indicator))
       (:status-frame . ,(agent-shell--status-frame))
       (:qualifier . ,qualifier)
       (:bindings . ,bindings))))
@@ -2264,7 +2283,7 @@ BINDINGS is a list of alists defining key bindings to display, each with:
   (unless state
     (error "STATE is required"))
   (let* ((header-model (agent-shell--make-header-model state :qualifier qualifier :bindings bindings))
-         (text-header (format " %s%s%s @ %s%s"
+         (text-header (format " %s%s%s @ %s%s%s"
                               (propertize (concat (map-elt header-model :buffer-name) " Agent")
                                           'font-lock-face 'font-lock-variable-name-face)
                               (if (map-elt header-model :model-name)
@@ -2275,6 +2294,9 @@ BINDINGS is a list of alists defining key bindings to display, each with:
                                 "")
                               (propertize (string-remove-suffix "/" (abbreviate-file-name (map-elt header-model :directory)))
                                           'font-lock-face 'font-lock-string-face)
+                              (if (map-elt header-model :context-indicator)
+                                  (concat " " (map-elt header-model :context-indicator))
+                                "")
                               (if (map-elt header-model :status-frame)
                                   (map-elt header-model :status-frame)
                                 ""))))
@@ -2356,6 +2378,18 @@ BINDINGS is a list of alists defining key bindings to display, each with:
                                                                                    "#6699cc"))
                                                                       (dx . "8"))
                                                                     (map-elt header-model :mode-name))))
+                                      (when (map-elt header-model :context-indicator)
+                                        (let* (;; Extract the face from the propertized string
+                                               (face (get-text-property 0 'face (map-elt header-model :context-indicator)))
+                                               ;; Get the foreground color from the face
+                                               (color (if face
+                                                          (face-attribute face :foreground nil t)
+                                                        (face-attribute 'default :foreground))))
+                                          (dom-append-child text-node
+                                                            (dom-node 'tspan
+                                                                      `((fill . ,color)
+                                                                        (dx . "8"))
+                                                                      (substring-no-properties (map-elt header-model :context-indicator))))))
                                       (when (map-elt header-model :status-frame)
                                         (dom-append-child text-node
                                                           (dom-node 'tspan
@@ -3068,8 +3102,20 @@ If FILE-PATH is not an image, returns nil."
                    ;; a session prompt request is finished.
                    ;; Avoid accumulating them unnecessarily.
                    (map-put! (agent-shell--state) :tool-calls nil)
+                   ;; Extract usage information from response
+                   (when (map-elt response 'usage)
+                     (agent-shell--save-usage :state (agent-shell--state) :acp-usage (map-elt response 'usage)))
                    (let ((success (equal (map-elt response 'stopReason)
                                          "end_turn")))
+                     ;; Display usage box at end of turn if enabled and data available
+                     (when-let* (((and success
+                                       agent-shell-show-usage-at-turn-end
+                                       (agent-shell--usage-has-data-p (map-elt (agent-shell--state) :usage)))))
+                       (agent-shell--update-fragment
+                        :state (agent-shell--state)
+                        :block-id (format "%s-usage" (map-elt (agent-shell--state) :request-count))
+                        :body (agent-shell--format-usage-box (map-elt (agent-shell--state) :usage))
+                        :create-new t))
                      (unless success
                        (agent-shell--update-fragment
                         :state (agent-shell--state)
@@ -4320,6 +4366,8 @@ Shows \" [C]\" when running in a container."
               (propertize (format " [%s]" mode-name)
                           'face 'font-lock-type-face
                           'help-echo (format "Session Mode: %s" mode-name)))
+            (when-let ((indicator (agent-shell--context-usage-indicator)))
+              (concat " " indicator))
             (agent-shell--status-frame))))
 
 (defun agent-shell--setup-modeline ()
