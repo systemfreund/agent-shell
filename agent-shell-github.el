@@ -44,6 +44,24 @@ The first element is the command name, and the rest are command parameters."
   :type '(repeat string)
   :group 'agent-shell)
 
+(defcustom agent-shell-github-default-model-id
+  nil
+  "Default GitHub Copilot model ID.
+
+Must be one of the model ID's displayed under \"Available models\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
+(defcustom agent-shell-github-default-session-mode-id
+  nil
+  "Default GitHub Copilot session mode ID.
+
+Must be one of the mode ID's displayed under \"Available modes\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-github-environment
   nil
   "Environment variables for the GitHub Copilot agent client.
@@ -67,6 +85,8 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :welcome-function #'agent-shell-github--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-github-make-client :buffer buffer))
+   :default-model-id (lambda () agent-shell-github-default-model-id)
+   :default-session-mode-id (lambda () agent-shell-github-default-session-mode-id)
    :install-instructions "See https://github.com/github/copilot-cli for installation."))
 
 (defun agent-shell-github-start-copilot ()
