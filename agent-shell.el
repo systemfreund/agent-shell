@@ -526,6 +526,7 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :prompt-capabilities nil)
+        (cons :event-subscriptions nil)
         (cons :pending-requests nil)
         (cons :usage (list (cons :total-tokens 0)
                            (cons :input-tokens 0)
@@ -846,6 +847,7 @@ Flow:
               (shell-maker--current-request-id))
     (cond ((not (map-elt (agent-shell--state) :client))
            ;; Needs a client
+           (agent-shell--emit-event :event 'init-started)
            (when (and agent-shell-show-busy-indicator
                       (not command))
              (agent-shell-heartbeat-start
@@ -959,9 +961,12 @@ Flow:
             :on-mode-changed (lambda ()
                                (map-put! (agent-shell--state) :set-session-mode t)
                                (agent-shell--handle :command command :shell-buffer shell-buffer))))
-          ;; Send ACP prompt request
-          ((and command (not (string-empty-p (string-trim command))))
-           (agent-shell--send-command :prompt command :shell-buffer shell-buffer)))))
+          ;; Initialization complete
+          (t
+           (agent-shell--emit-event :event 'init-finished)
+           ;; Send ACP prompt request
+           (when (and command (not (string-empty-p (string-trim command))))
+             (agent-shell--send-command :prompt command :shell-buffer shell-buffer))))))
 
 (cl-defun agent-shell--on-error (&key state error)
   "Handle ERROR with SHELL an STATE."
@@ -1021,6 +1026,10 @@ otherwise returns COMMAND unchanged."
                               (cons :content (map-elt update 'content)))
                         (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                           (list (cons :diff diff)))))
+               (agent-shell--emit-event
+                :event 'tool-call-update
+                :data (list (cons :tool-call-id (map-elt update 'toolCallId))
+                            (cons :tool-call (map-nested-elt state (list :tool-calls (map-elt update 'toolCallId))))))
                (let ((tool-call-labels (agent-shell-make-tool-call-label
                                         state (map-elt update 'toolCallId))))
                  (agent-shell--update-fragment
@@ -1130,6 +1139,10 @@ otherwise returns COMMAND unchanged."
                             (list (cons :title command)))
                           (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                             (list (cons :diff diff)))))
+                 (agent-shell--emit-event
+                  :event 'tool-call-update
+                  :data (list (cons :tool-call-id .toolCallId)
+                              (cons :tool-call (map-nested-elt state (list :tool-calls .toolCallId)))))
                  (let* ((diff (map-nested-elt state `(:tool-calls ,.toolCallId :diff)))
                         (output (concat
                                  "\n\n"
@@ -1419,6 +1432,10 @@ function before returning."
                    (lambda ()
                      (replace-buffer-contents content-buffer 1.0)))
                   (basic-save-buffer)))))
+          (agent-shell--emit-event
+           :event 'file-write
+           :data (list (cons :path path)
+                       (cons :content content)))
           (acp-send-response
            :client (map-elt state :client)
            :response (acp-make-fs-write-text-file-response
@@ -2725,6 +2742,102 @@ INSTALL-INSTRUCTIONS is optional installation guidance."
     (error "No shell state available"))
   agent-shell--state)
 
+;;; Events
+
+(defvar agent-shell--subscription-counter 0
+  "Counter for generating unique subscription tokens.")
+
+(cl-defun agent-shell-subscribe-to (&key shell-buffer event on-event)
+  "Subscribe to events in SHELL-BUFFER.
+
+ON-EVENT is a function called with an event alist containing:
+  :event - A symbol identifying the event
+
+When EVENT is non-nil, only events matching that symbol are dispatched.
+When EVENT is nil, all events are dispatched.
+
+Initialization events (emitted in order):
+  `init-started'        - Initialization pipeline started
+  `init-client'         - ACP client created
+  `init-subscriptions'  - ACP event subscriptions registered
+  `init-handshake'      - ACP initialize/handshake RPC completed
+  `init-authenticate'   - ACP authentication completed (optional)
+  `init-session'        - ACP session created
+  `init-model'          - Default model set (optional)
+  `init-session-mode'   - Default session mode set (optional)
+  `init-finished'       - Initialization pipeline completed
+
+Session events:
+  `tool-call-update'    - Tool call started or updated
+    :data contains :tool-call-id and :tool-call
+  `file-write'          - File written via fs/write_text_file
+    :data contains :path and :content
+  `permission-response' - Permission response sent
+    :data contains :request-id, :tool-call-id, :option-id, :cancelled
+
+Returns a subscription token for use with `agent-shell-unsubscribe'.
+
+Example usage:
+
+  ;; Subscribe to all events
+  (agent-shell-subscribe-to
+   :shell-buffer shell-buffer
+   :on-event (lambda (event)
+               (message \"event: %s\" (map-elt event :event))))
+
+  ;; Subscribe to file writes
+  (agent-shell-subscribe-to
+   :shell-buffer shell-buffer
+   :event \\='file-write
+   :on-event (lambda (event)
+               (let ((data (map-elt event :data)))
+                 (message \"wrote: %s\" (map-elt data :path)))))
+
+  ;; Unsubscribe
+  (let ((token (agent-shell-subscribe-to
+                :shell-buffer shell-buffer
+                :on-event #\\='my-handler)))
+    (agent-shell-unsubscribe :subscription token))"
+  (unless on-event
+    (error "Missing required argument: :on-event"))
+  (unless shell-buffer
+    (error "Missing required argument: :shell-buffer"))
+  (let ((token (cl-incf agent-shell--subscription-counter)))
+    (with-current-buffer shell-buffer
+      (let ((subscriptions (map-elt (agent-shell--state) :event-subscriptions)))
+        (map-put! (agent-shell--state)
+                  :event-subscriptions
+                  (cons (list (cons :token token)
+                              (cons :event event)
+                              (cons :on-event on-event))
+                        subscriptions))))
+    token))
+
+(cl-defun agent-shell-unsubscribe (&key subscription)
+  "Remove event SUBSCRIPTION by token.
+
+SUBSCRIPTION is a token returned by `agent-shell-subscribe-to'."
+  (unless subscription
+    (error "Missing required argument: :subscription"))
+  (let ((subscriptions (map-elt (agent-shell--state) :event-subscriptions)))
+    (map-put! (agent-shell--state)
+              :event-subscriptions
+              (seq-remove (lambda (sub)
+                            (equal (map-elt sub :token) subscription))
+                          subscriptions))))
+
+(cl-defun agent-shell--emit-event (&key event data)
+  "Emit an EVENT to matching subscribers.
+EVENT is a symbol identifying the event.
+DATA is an optional alist of event-specific data."
+  (let ((event-alist (list (cons :event event))))
+    (when data
+      (push (cons :data data) event-alist))
+    (dolist (sub (map-elt (agent-shell--state) :event-subscriptions))
+      (when (or (not (map-elt sub :event))
+                (eq (map-elt sub :event) event))
+        (funcall (map-elt sub :on-event) event-alist)))))
+
 ;;; Initialization
 
 (cl-defun agent-shell--initialize-client ()
@@ -2742,6 +2855,7 @@ INSTALL-INSTRUCTIONS is optional installation guidance."
         (map-put! (agent-shell--state)
                   :client (funcall (map-elt agent-shell--state :client-maker)
                                    (map-elt agent-shell--state :buffer)))
+        (agent-shell--emit-event :event 'init-client)
         t)
     (shell-maker-write-output :config shell-maker--config
                               :output "No :client-maker found")
@@ -2762,6 +2876,7 @@ INSTALL-INSTRUCTIONS is optional installation guidance."
   (if (map-elt agent-shell--state :client)
       (progn
         (agent-shell--subscribe-to-client-events :state agent-shell--state)
+        (agent-shell--emit-event :event 'init-subscriptions)
         t)
     (shell-maker-write-output :config shell-maker--config
                               :output "No :client found")
@@ -2813,7 +2928,8 @@ Must provide ON-INITIATED (lambda ())."
                       :namespace-id "bootstrapping"
                       :block-id "agent_capabilities"
                       :label-left (propertize "Agent capabilities" 'font-lock-face 'font-lock-doc-markup-face)
-                      :body (agent-shell--format-agent-capabilities agent-capabilities))))
+                      :body (agent-shell--format-agent-capabilities agent-capabilities)))
+                   (agent-shell--emit-event :event 'init-handshake))
                  (funcall on-initiated))
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell-buffer shell-buffer)))
@@ -2834,6 +2950,8 @@ Must provide ON-AUTHENTICATED (lambda ())."
        :request (funcall (map-elt agent-shell--state :authenticate-request-maker))
        :on-success (lambda (_response)
                      ;; TODO: More to be handled?
+                     (with-current-buffer shell-buffer
+                       (agent-shell--emit-event :event 'init-authenticate))
                      (funcall on-authenticated))
        :on-failure (agent-shell--make-error-handler
                     :state (agent-shell--state) :shell-buffer shell-buffer))
@@ -2869,6 +2987,7 @@ Call ON-MODEL-CHANGED on success."
                      (map-put! updated-session :model-id model-id)
                      (map-put! (agent-shell--state) :session updated-session))
                    (agent-shell--update-header-and-mode-line)
+                   (agent-shell--emit-event :event 'init-model)
                    (when on-model-changed
                      (funcall on-model-changed)))
      :on-failure (agent-shell--make-error-handler
@@ -2901,6 +3020,7 @@ Call ON-MODE-CHANGED on success."
                      (map-put! updated-session :mode-id mode-id)
                      (map-put! (agent-shell--state) :session updated-session))
                    (agent-shell--update-header-and-mode-line)
+                   (agent-shell--emit-event :event 'init-session-mode)
                    (when on-mode-changed
                      (funcall on-mode-changed)))
      :on-failure (agent-shell--make-error-handler
@@ -2966,6 +3086,7 @@ Must provide ON-SESSION-INIT (lambda ())."
                     :body (agent-shell--format-available-modes
                            (agent-shell--get-available-modes agent-shell--state))))
                  (agent-shell--update-header-and-mode-line)
+                 (agent-shell--emit-event :event 'init-session)
                  (funcall on-session-init))
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell-buffer shell-buffer)))
@@ -3744,6 +3865,12 @@ MESSAGE-TEXT: Optional message to display after sending the response."
   (agent-shell--delete-fragment :state state :block-id (format "permission-%s" tool-call-id))
   (map-put! state :tool-calls
             (map-delete (map-elt state :tool-calls) tool-call-id))
+  (agent-shell--emit-event
+   :event 'permission-response
+   :data (list (cons :request-id request-id)
+               (cons :tool-call-id tool-call-id)
+               (cons :option-id option-id)
+               (cons :cancelled cancelled)))
   (when message-text
     (message "%s" message-text))
   ;; Jump to any remaining permission buttons, or go to end of buffer.

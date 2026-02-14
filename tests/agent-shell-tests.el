@@ -479,7 +479,7 @@
       ;; Send a simple command
       (agent-shell--send-command
        :prompt "Hello agent"
-       :shell nil)
+       :shell-buffer nil)
 
       ;; Verify request was sent
       (should sent-request)
@@ -516,7 +516,7 @@
       ;; Now verify send-command handles the error gracefully
       (agent-shell--send-command
        :prompt "Test prompt with @file.txt"
-       :shell nil)
+       :shell-buffer nil)
 
       ;; Verify request was sent (fallback succeeded)
       (should sent-request)
@@ -858,6 +858,124 @@ code block content with spaces
     (agent-shell--capf-exit-with-space "ignored" 'finished)
     (should (equal (buffer-string) "test "))
     (should (equal (point) 6))))
+
+(ert-deftest agent-shell-subscribe-to-test ()
+  "Test `agent-shell-subscribe-to' and event dispatching."
+  (let* ((received-events nil)
+         (agent-shell--state (list (cons :buffer (current-buffer))
+                                   (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (agent-shell-subscribe-to
+       :shell-buffer (current-buffer)
+       :on-event (lambda (event)
+                   (push event received-events)))
+
+      (agent-shell--emit-event :event 'init-client)
+      (agent-shell--emit-event :event 'init-session)
+      (agent-shell--emit-event :event 'init-model)
+
+      (should (= (length received-events) 3))
+
+      ;; Events are pushed, so most recent is first
+      (should (equal (map-elt (nth 2 received-events) :event) 'init-client))
+      (should (equal (map-elt (nth 1 received-events) :event) 'init-session))
+      (should (equal (map-elt (nth 0 received-events) :event) 'init-model)))))
+
+(ert-deftest agent-shell-subscribe-to-filtered-test ()
+  "Test `agent-shell-subscribe-to' with :event filter."
+  (let* ((received-events nil)
+         (agent-shell--state (list (cons :buffer (current-buffer))
+                                   (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (agent-shell-subscribe-to
+       :shell-buffer (current-buffer)
+       :event 'init-session
+       :on-event (lambda (event)
+                   (push event received-events)))
+
+      (agent-shell--emit-event :event 'init-client)
+      (agent-shell--emit-event :event 'init-session)
+      (agent-shell--emit-event :event 'init-client)
+      (agent-shell--emit-event :event 'init-session)
+
+      ;; Only init-session events should be received
+      (should (= (length received-events) 2))
+      (should (equal (map-elt (nth 0 received-events) :event) 'init-session))
+      (should (equal (map-elt (nth 1 received-events) :event) 'init-session)))))
+
+(ert-deftest agent-shell-unsubscribe-test ()
+  "Test `agent-shell-unsubscribe' removes subscription."
+  (let* ((received-events nil)
+         (agent-shell--state (list (cons :buffer (current-buffer))
+                                   (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (let ((token (agent-shell-subscribe-to
+                    :shell-buffer (current-buffer)
+                    :on-event (lambda (event)
+                                (push event received-events)))))
+
+        (agent-shell--emit-event :event 'init-client)
+        (should (= (length received-events) 1))
+
+        (agent-shell-unsubscribe :subscription token)
+
+        (agent-shell--emit-event :event 'init-session)
+        ;; Should still be 1 — no new events after unsubscribe
+        (should (= (length received-events) 1))))))
+
+(ert-deftest agent-shell--emit-event-with-data-test ()
+  "Test `agent-shell--emit-event' passes :data to subscribers."
+  (let* ((received-events nil)
+         (agent-shell--state (list (cons :buffer (current-buffer))
+                                   (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (agent-shell-subscribe-to
+       :shell-buffer (current-buffer)
+       :on-event (lambda (event)
+                   (push event received-events)))
+
+      (agent-shell--emit-event
+       :event 'file-write
+       :data (list (cons :path "/tmp/test.txt")
+                   (cons :content "hello")))
+
+      (should (= (length received-events) 1))
+      (let ((event (car received-events)))
+        (should (equal (map-elt event :event) 'file-write))
+        (should (equal (map-elt (map-elt event :data) :path) "/tmp/test.txt"))
+        (should (equal (map-elt (map-elt event :data) :content) "hello"))))))
+
+(ert-deftest agent-shell--emit-event-data-omitted-when-nil-test ()
+  "Test `agent-shell--emit-event' omits :data when nil."
+  (let* ((received-events nil)
+         (agent-shell--state (list (cons :buffer (current-buffer))
+                                   (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (agent-shell-subscribe-to
+       :shell-buffer (current-buffer)
+       :on-event (lambda (event)
+                   (push event received-events)))
+
+      (agent-shell--emit-event :event 'init-client)
+
+      (should (= (length received-events) 1))
+      (let ((event (car received-events)))
+        (should (equal (map-elt event :event) 'init-client))
+        (should-not (assoc :data event))))))
+
+(ert-deftest agent-shell--emit-event-no-subscribers-test ()
+  "Test `agent-shell--emit-event' works with no subscribers."
+  (let ((agent-shell--state (list (cons :buffer (current-buffer))
+                                  (cons :event-subscriptions nil))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      ;; Should not error when no subscriptions exist
+      (agent-shell--emit-event :event 'init-client))))
 
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
