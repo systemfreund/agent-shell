@@ -2250,7 +2250,9 @@ by default."
   (when-let (((map-elt state :buffer))
              (viewport-buffer (agent-shell-viewport--buffer
                                :shell-buffer (map-elt state :buffer)
-                               :existing-only t)))
+                               :existing-only t))
+             ((with-current-buffer viewport-buffer
+                (derived-mode-p 'agent-shell-viewport-view-mode))))
     (with-current-buffer viewport-buffer
       (let ((inhibit-read-only t))
         ;; TODO: Investigate why save-restriction isn't enough
@@ -2356,7 +2358,9 @@ APPEND and CREATE-NEW control update behavior."
     (when-let (((map-elt state :buffer))
                (viewport-buffer (agent-shell-viewport--buffer
                                  :shell-buffer (map-elt state :buffer)
-                                 :existing-only t)))
+                                 :existing-only t))
+               ((with-current-buffer viewport-buffer
+                  (derived-mode-p 'agent-shell-viewport-view-mode))))
       (with-current-buffer viewport-buffer
         (let ((inhibit-read-only t))
           (agent-shell-ui-update-text
