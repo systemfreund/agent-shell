@@ -1,6 +1,10 @@
 ((nil . ((eval . (defun agent-shell-run-all-tests ()
                    "Run all agent-shell tests in batch mode."
                    (interactive)
+                   (mapatoms (lambda (sym)
+                               (when (and (ert-test-boundp sym)
+                                          (string-prefix-p "agent-shell" (symbol-name sym)))
+                                 (ert-delete-test sym))))
                    (let ((test-dir (expand-file-name "tests/" (project-root (project-current t)))))
                      (dolist (file (directory-files-recursively test-dir "\\.el$"))
                        (unless (string-match-p "/\\." file)
