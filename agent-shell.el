@@ -1235,17 +1235,27 @@ COMMAND, when present, may be a shell command string or an argv vector."
                   .toolCallId
                   (append (list (cons :status (map-elt update 'status))
                                 (cons :content (map-elt update 'content)))
-                          ;; OpenCode reports bash as title in tool_call notification
-                          ;; without a command. tool_call_update notification may
-                          ;; now have the command so upgrade the title to command
-                          ;; as it's more useful.
+                          ;; The initial tool_call notification often has a
+                          ;; generic title (eg. "grep", "bash", "Read").
+                          ;; The tool_call_update may have a more descriptive
+                          ;; title (eg. 'grep -i -n "tool" /path/to/file').
+                          ;; Upgrade to the more descriptive title when available.
                           ;; See https://github.com/xenodium/agent-shell/issues/182
-                          (when-let* ((should-upgrade-title
-                                       (string= (map-nested-elt state `(:tool-calls ,.toolCallId :title))
-                                                "bash"))
-                                      (command (agent-shell--tool-call-command-to-string
-                                                (map-nested-elt update '(rawInput command)))))
-                            (list (cons :title command)))
+                          ;; See https://github.com/xenodium/agent-shell/issues/309
+                          (when-let* ((new-title (map-elt update 'title))
+                                      (old-title (map-nested-elt state `(:tool-calls ,.toolCallId :title)))
+                                      (should-upgrade-title
+                                       (and (not (string-empty-p new-title))
+                                            (not (string= old-title new-title)))))
+                            (list (cons :title new-title)))
+                          (when-let* ((description (agent-shell--tool-call-command-to-string
+                                                    (map-nested-elt update '(rawInput description))))
+                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :description)))))
+                            (list (cons :description description)))
+                          (when-let* ((command (agent-shell--tool-call-command-to-string
+                                               (map-nested-elt update '(rawInput command))))
+                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
+                            (list (cons :command command)))
                           (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                             (list (cons :diff diff)))))
                  (agent-shell--emit-event
