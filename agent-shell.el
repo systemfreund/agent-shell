@@ -43,6 +43,7 @@
 (eval-when-compile
   (require 'cl-lib))
 (require 'dired)
+(require 'diff)
 (require 'json)
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
@@ -1987,7 +1988,7 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
           (with-temp-file old-file (insert (map-elt diff :old)))
           (with-temp-file new-file (insert (map-elt diff :new)))
           (with-temp-buffer
-            (call-process "diff" nil t nil "-U3" old-file new-file)
+            (call-process diff-command nil t nil "-U3" old-file new-file)
             ;; Remove file header lines with timestamps
             (goto-char (point-min))
             (when (looking-at "^---")
